@@ -12,6 +12,9 @@
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+    
+    <!-- Three.js for 3D Rendering -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 
     <style>
         /* Custom animations */
@@ -20,45 +23,53 @@
             100% { transform: scale(1.1); opacity: 0; }
         }
         
-        /* Smooth progress bar transition */
         .progress-ring__circle {
             transition: stroke-dashoffset 0.1s linear;
             transform: rotate(-90deg);
             transform-origin: 50% 50%;
         }
 
-        /* Prevent scrolling/bouncing on mobile */
         body {
             overscroll-behavior: none;
+        }
+
+        /* Ensure Canvas Layers Overlap Perfectly */
+        .canvas-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
         }
     </style>
 </head>
 <body class="bg-black text-white h-screen w-screen overflow-hidden flex flex-col items-center justify-center relative font-sans">
 
-    <!-- Start Screen / Permission Request -->
+    <!-- Start Screen -->
     <div id="start-screen" class="absolute inset-0 z-50 flex flex-col items-center justify-center bg-black/95 backdrop-blur-sm p-4">
         <div class="bg-gray-900 p-8 rounded-3xl border border-gray-800 shadow-2xl text-center max-w-sm w-full mx-4">
             <div class="mb-6 bg-gray-800 w-20 h-20 rounded-full flex items-center justify-center mx-auto text-4xl animate-bounce">👋</div>
-            <h1 class="text-3xl font-bold mb-3">Touchless Promo</h1>
-            <p class="text-gray-400 mb-8 leading-relaxed">Hold your hand up to unlock your Uber discount automatically.</p>
+            <h1 class="text-3xl font-bold mb-3">Uber AR Promo</h1>
+            <p class="text-gray-400 mb-8 leading-relaxed">Hold your hand up to see the AR car and unlock your discount.</p>
             <button id="start-btn" class="w-full bg-white text-black py-4 rounded-xl font-bold text-lg hover:bg-gray-200 active:scale-95 transition-all flex items-center justify-center gap-3">
                 <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path><circle cx="12" cy="13" r="4"></circle></svg>
-                Start Camera
+                Start Experience
             </button>
-            <p class="mt-4 text-xs text-gray-600">Works best in good lighting.</p>
         </div>
     </div>
 
-    <!-- Main App Container (Full Screen) -->
+    <!-- Main App Container -->
     <div class="fixed inset-0 w-full h-full bg-black">
-        <!-- Hidden Source Video (playsinline is CRITICAL for iOS) -->
         <video class="input_video hidden" playsinline></video>
         
-        <!-- Output Canvas -->
-        <canvas class="output_canvas w-full h-full object-cover transform -scale-x-100"></canvas>
+        <!-- Layer 1: Camera Feed + Skeleton -->
+        <canvas class="output_canvas canvas-layer object-cover transform -scale-x-100 z-0"></canvas>
+        
+        <!-- Layer 2: 3D Scene (Transparent) -->
+        <canvas id="three-canvas" class="canvas-layer z-10 pointer-events-none"></canvas>
 
         <!-- UI Overlay -->
-        <div class="absolute inset-0 pointer-events-none flex flex-col justify-between p-4 md:p-8 safe-area-inset">
+        <div class="absolute inset-0 pointer-events-none flex flex-col justify-between p-4 md:p-8 safe-area-inset z-20">
             <!-- Header -->
             <div class="flex justify-between items-start pt-2">
                 <div class="bg-black/40 backdrop-blur-md px-4 py-2 rounded-full border border-white/10 flex items-center gap-2 shadow-lg">
@@ -66,32 +77,19 @@
                     <span class="text-xs font-bold tracking-wide uppercase" id="status-text">Scanning</span>
                 </div>
                 
-                <!-- Promo Badge -->
                 <div class="bg-black/40 backdrop-blur-md px-3 py-2 rounded-full border border-yellow-500/30 shadow-lg flex items-center gap-2">
                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#EAB308" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"></path><line x1="7" y1="7" x2="7.01" y2="7"></line></svg>
-                   <span class="text-xs font-bold text-yellow-500 uppercase tracking-wider" id="promo-display">HANDS_FREE</span>
+                   <span class="text-xs font-bold text-yellow-500 uppercase tracking-wider" id="promo-display">...</span>
                 </div>
             </div>
 
-            <!-- Central Feedback (Progress Circle) -->
+            <!-- Central Feedback -->
             <div class="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 flex items-center justify-center">
                 <div id="gesture-feedback" class="opacity-0 transition-opacity duration-300 relative w-48 h-48 flex items-center justify-center">
-                    <!-- Timer SVG -->
                     <svg class="progress-ring w-48 h-48 drop-shadow-2xl" width="160" height="160" viewBox="0 0 160 160">
                         <circle class="stroke-white/20" stroke-width="12" fill="rgba(0,0,0,0.3)" r="70" cx="80" cy="80" />
-                        <circle 
-                            id="progress-circle"
-                            class="progress-ring__circle stroke-white" 
-                            stroke-width="12" 
-                            fill="transparent" 
-                            r="70" 
-                            cx="80" 
-                            cy="80" 
-                            stroke-linecap="round"
-                            style="stroke-dasharray: 439.8; stroke-dashoffset: 439.8;" 
-                        />
+                        <circle id="progress-circle" class="progress-ring__circle stroke-white" stroke-width="12" fill="transparent" r="70" cx="80" cy="80" stroke-linecap="round" style="stroke-dasharray: 439.8; stroke-dashoffset: 439.8;" />
                     </svg>
-                    <!-- Counter Text -->
                     <div class="absolute inset-0 flex items-center justify-center flex-col">
                         <span id="countdown-text" class="text-6xl font-black font-mono drop-shadow-lg">3</span>
                     </div>
@@ -101,12 +99,12 @@
             <!-- Bottom Instruction -->
             <div class="w-full text-center pb-8">
                 <div class="inline-block bg-black/60 backdrop-blur-xl px-8 py-4 rounded-3xl border border-white/10 shadow-2xl transition-all duration-300" id="instruction-box">
-                    <p id="instruction-text" class="text-xl md:text-2xl font-bold">Show hand for Promo</p>
+                    <p id="instruction-text" class="text-xl md:text-2xl font-bold">Show hand for AR</p>
                 </div>
             </div>
         </div>
 
-        <!-- Success/Redirect Modal -->
+        <!-- Success Modal -->
         <div id="success-modal" class="absolute inset-0 bg-black/95 backdrop-blur-xl z-50 flex flex-col items-center justify-center transform translate-y-full transition-transform duration-500 ease-in-out p-6">
             <div class="bg-white text-black p-6 rounded-full w-24 h-24 flex items-center justify-center mb-6 animate-bounce shadow-[0_0_50px_rgba(255,255,255,0.5)]">
                 <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
@@ -119,7 +117,6 @@
                 </div>
             </div>
             
-            <!-- Manual Button with Deep Link -->
             <a id="uber-link-btn" href="#" target="_blank" rel="noopener noreferrer" class="w-full max-w-xs bg-[#276EF1] hover:bg-[#1f5dc7] text-white font-bold py-4 px-8 rounded-xl flex items-center justify-center gap-3 transition-colors shadow-lg transform active:scale-95">
                 <span>Open Uber App</span>
                 <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg>
@@ -130,15 +127,15 @@
     </div>
 
     <script>
-        // --- DEVELOPER CONFIGURATION ---
-        // Replace with your actual Uber Client ID and Promo Code
+        // CONFIG
         const UBER_CLIENT_ID = "YOUR_CLIENT_ID_HERE"; 
         const PROMO_CODE = "RIDEUBER2026FT"; 
-        // -------------------------------
-
+        
+        // DOM Elements
         const videoElement = document.querySelector('.input_video');
         const canvasElement = document.querySelector('.output_canvas');
         const canvasCtx = canvasElement.getContext('2d');
+        const threeCanvas = document.getElementById('three-canvas');
         const startBtn = document.getElementById('start-btn');
         const startScreen = document.getElementById('start-screen');
         const statusDot = document.getElementById('status-dot');
@@ -151,21 +148,100 @@
         const successModal = document.getElementById('success-modal');
         const uberLinkBtn = document.getElementById('uber-link-btn');
         const closeModalBtn = document.getElementById('close-modal-btn');
-        const promoDisplay = document.getElementById('promo-display');
-        const successPromoCode = document.getElementById('success-promo-code');
 
-        // Update UI with config
-        promoDisplay.innerText = PROMO_CODE;
-        successPromoCode.innerText = PROMO_CODE;
-
-        // Construct Universal Deep Link
-        // Using m.uber.com/ul/ ensures it works on both web (fallback) and mobile (app)
+        // Init UI
+        document.getElementById('promo-display').innerText = PROMO_CODE;
+        document.getElementById('success-promo-code').innerText = PROMO_CODE;
         const DEEP_LINK = `https://m.uber.com/ul/?action=applyPromo&client_id=${UBER_CLIENT_ID}&promo=${PROMO_CODE}`;
-
-        // Set the href for the fallback button immediately
         uberLinkBtn.href = DEEP_LINK;
 
-        // Circle Math
+        // --- THREE.JS VARIABLES ---
+        let scene, camera, renderer;
+        let carGroup;
+        let occluderMeshes = []; // Array to hold 21 spheres
+        let carAngle = 0;
+
+        // --- THREE.JS SETUP ---
+        function initThreeJS() {
+            const width = window.innerWidth;
+            const height = window.innerHeight;
+
+            scene = new THREE.Scene();
+            
+            camera = new THREE.PerspectiveCamera(75, width / height, 0.1, 100);
+            camera.position.z = 10; 
+
+            renderer = new THREE.WebGLRenderer({ canvas: threeCanvas, alpha: true, antialias: true });
+            renderer.setSize(width, height);
+            renderer.setPixelRatio(window.devicePixelRatio);
+
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+            scene.add(ambientLight);
+            const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+            dirLight.position.set(5, 10, 7);
+            scene.add(dirLight);
+
+            // 1. Create the Car
+            carGroup = createCarModel();
+            scene.add(carGroup);
+
+            // 2. Create the Detailed Hand Occluder (21 Spheres)
+            // colorWrite: false means it is invisible but writes to depth buffer
+            const occluderMat = new THREE.MeshBasicMaterial({ color: 0x00ff00, colorWrite: false });
+            
+            for (let i = 0; i < 21; i++) {
+                // Different sizes for different parts of the hand
+                let r = 0.4; // Default finger size
+                
+                if (i === 0) r = 1.5; // Wrist (larger)
+                else if ([1, 5, 9, 13, 17].includes(i)) r = 1.3; // Knuckles (Center palm area) - Increased size
+                
+                const geom = new THREE.SphereGeometry(r, 16, 16);
+                const mesh = new THREE.Mesh(geom, occluderMat);
+                // Ensure occluders render before the car so they populate depth buffer
+                mesh.renderOrder = 0; 
+                
+                scene.add(mesh);
+                occluderMeshes.push(mesh);
+            }
+        }
+
+        function createCarModel() {
+            const group = new THREE.Group();
+            const blackMat = new THREE.MeshLambertMaterial({color: 0x111111});
+            const glassMat = new THREE.MeshLambertMaterial({color: 0x444444});
+
+            // Chassis
+            const chassis = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.5, 3), blackMat);
+            chassis.position.y = 0.5;
+            group.add(chassis);
+
+            // Cabin
+            const cabin = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.4, 1.5), glassMat);
+            cabin.position.y = 1.0;
+            cabin.position.z = -0.2;
+            group.add(cabin);
+
+            // Wheels
+            const wheelGeom = new THREE.CylinderGeometry(0.3, 0.3, 0.2, 16);
+            const wheelMat = new THREE.MeshLambertMaterial({color: 0x333333});
+            const positions = [
+                {x: -0.8, z: 1.0}, {x: 0.8, z: 1.0},
+                {x: -0.8, z: -1.0}, {x: 0.8, z: -1.0}
+            ];
+            positions.forEach(pos => {
+                const w = new THREE.Mesh(wheelGeom, wheelMat);
+                w.rotation.z = Math.PI/2;
+                w.position.set(pos.x, 0.3, pos.z);
+                group.add(w);
+            });
+
+            group.scale.set(0.5, 0.5, 0.5);
+            group.renderOrder = 1; // Render after occluders
+            return group;
+        }
+
+        // --- MEDIAPIPE LOGIC ---
         const radius = progressCircle.r.baseVal.value;
         const circumference = radius * 2 * Math.PI;
         progressCircle.style.strokeDasharray = `${circumference} ${circumference}`;
@@ -176,41 +252,39 @@
             progressCircle.style.strokeDashoffset = offset;
         }
 
-        // Logic State
         let bookingState = 'idle';
         let handDetectedStartTime = null;
         const REQUIRED_DURATION = 3000;
-        let camera = null;
+        let cameraObj = null;
         let hands = null;
 
-        // Resize logic to handle mobile orientation changes
         function resizeCanvas() {
-            canvasElement.width = window.innerWidth;
-            canvasElement.height = window.innerHeight;
+            const w = window.innerWidth;
+            const h = window.innerHeight;
+            canvasElement.width = w;
+            canvasElement.height = h;
+            if(camera) {
+                camera.aspect = w / h;
+                camera.updateProjectionMatrix();
+                renderer.setSize(w, h);
+            }
         }
         window.addEventListener('resize', resizeCanvas);
 
-        // Fist Detection Logic
         function isFist(landmarks) {
              const tips = [8, 12, 16, 20];
              const pips = [6, 10, 14, 18];
              let curledCount = 0;
              const distSq = (p1, p2) => (p1.x - p2.x)**2 + (p1.y - p2.y)**2;
              const wrist = landmarks[0];
-
              for(let i=0; i<4; i++){
-                 if (distSq(landmarks[tips[i]], wrist) < distSq(landmarks[pips[i]], wrist)) {
-                     curledCount++;
-                 }
+                 if (distSq(landmarks[tips[i]], wrist) < distSq(landmarks[pips[i]], wrist)) curledCount++;
              }
              return curledCount >= 3;
         }
 
         function onResults(results) {
-            if (canvasElement.width !== window.innerWidth || canvasElement.height !== window.innerHeight) {
-                resizeCanvas();
-            }
-
+            // Draw 2D Video Layer
             canvasCtx.save();
             canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
             
@@ -229,19 +303,55 @@
                 offsetX = 0;
                 offsetY = -(drawHeight - canvasElement.height) / 2;
             }
-
             canvasCtx.drawImage(results.image, offsetX, offsetY, drawWidth, drawHeight);
-            
+
+            // --- 3D UPDATE LOOP ---
             if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
                 const landmarks = results.multiHandLandmarks[0];
 
                 statusDot.classList.replace('bg-red-500', 'bg-green-500');
-                statusText.innerText = "Active";
+                statusText.innerText = "Tracking";
                 statusText.classList.add('text-green-400');
+                
+                drawConnectors(canvasCtx, landmarks, HAND_CONNECTIONS, {color: 'rgba(255, 255, 255, 0.2)', lineWidth: 1});
 
-                drawConnectors(canvasCtx, landmarks, HAND_CONNECTIONS, {color: 'rgba(255, 255, 255, 0.4)', lineWidth: 2});
+                // Update ALL 21 Occluder Spheres
+                // We need to map 2D landmarks to 3D world space at Z=0
+                const zDepth = 0; 
+                const dist = camera.position.z - zDepth;
+                const vFOV = THREE.Math.degToRad(camera.fov);
+                const visibleHeight = 2 * Math.tan(vFOV / 2) * dist;
+                const visibleWidth = visibleHeight * camera.aspect;
 
-                // --- STATE MACHINE ---
+                for(let i=0; i<21; i++) {
+                    const lm = landmarks[i];
+                    // Mirroring logic: (1 - x) because of -scale-x-100 CSS
+                    const x = (1 - lm.x) * 2 - 1; 
+                    const y = -(lm.y * 2 - 1);    
+
+                    if (occluderMeshes[i]) {
+                        occluderMeshes[i].position.set(
+                            x * (visibleWidth / 2),
+                            y * (visibleHeight / 2),
+                            zDepth
+                        );
+                    }
+                }
+
+                // Car Orbit Logic (Around the Wrist #0 or Palm #9)
+                // Let's use landmark 9 (middle finger knuckle) as center of rotation
+                const centerIdx = 9;
+                const centerMesh = occluderMeshes[centerIdx];
+                
+                carAngle += 0.05;
+                const orbitRadius = 4.0;
+                
+                carGroup.position.x = centerMesh.position.x + Math.cos(carAngle) * orbitRadius;
+                carGroup.position.z = centerMesh.position.z + Math.sin(carAngle) * orbitRadius; 
+                carGroup.position.y = centerMesh.position.y;
+                carGroup.rotation.y = -carAngle;
+
+                // --- APP LOGIC ---
                 if (bookingState === 'idle') {
                     bookingState = 'counting';
                     handDetectedStartTime = Date.now();
@@ -281,6 +391,8 @@
                 statusDot.classList.replace('bg-green-500', 'bg-red-500');
                 statusText.innerText = "Scanning";
                 statusText.classList.remove('text-green-400');
+                
+                carGroup.position.set(0, -100, 0);
 
                 if (bookingState !== 'redirecting') {
                     bookingState = 'idle';
@@ -288,34 +400,25 @@
                     feedbackContainer.classList.add('opacity-0');
                     setProgress(0);
                     countdownText.innerText = "3";
-                    instructionText.innerText = "Show hand for Promo";
-                    
+                    instructionText.innerText = "Show hand for AR";
                     instructionBox.className = "inline-block bg-black/60 backdrop-blur-xl px-8 py-4 rounded-3xl border border-white/10 shadow-2xl transition-all duration-300";
                     progressCircle.style.stroke = "white";
                 }
             }
             
             canvasCtx.restore();
+            renderer.render(scene, camera);
         }
 
         function triggerRedirect() {
             successModal.classList.remove('translate-y-full');
-            
             if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
 
-            // Attempt automatic redirect after short delay
             setTimeout(() => {
-                // Try to open in new tab (bypasses iframe restrictions)
                 const newWindow = window.open(DEEP_LINK, '_blank');
-
-                // If popup blocker stopped it, update text
-                if (!newWindow || newWindow.closed || typeof newWindow.closed == 'undefined') {
-                    // Just rely on the button which is always visible
-                }
             }, 500);
         }
 
-        // Allow user to cancel/reset if they come back
         closeModalBtn.addEventListener('click', () => {
              bookingState = 'idle';
              successModal.classList.add('translate-y-full');
@@ -323,33 +426,30 @@
         });
 
         async function initCamera() {
-            startBtn.innerHTML = `<svg class="animate-spin -ml-1 mr-3 h-5 w-5 text-black" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> Starting...`;
+            startBtn.innerHTML = "Starting AI...";
             startBtn.disabled = true;
 
             try {
-                hands = new Hands({locateFile: (file) => {
-                    return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
-                }});
+                // Init 3D Scene
+                initThreeJS();
 
+                hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
                 hands.setOptions({
                     maxNumHands: 1,
-                    modelComplexity: 0, // Lower complexity for better mobile performance
+                    modelComplexity: 0,
                     minDetectionConfidence: 0.5,
                     minTrackingConfidence: 0.5
                 });
-
                 hands.onResults(onResults);
 
-                camera = new Camera(videoElement, {
-                    onFrame: async () => {
-                        await hands.send({image: videoElement});
-                    },
+                cameraObj = new Camera(videoElement, {
+                    onFrame: async () => { await hands.send({image: videoElement}); },
                     width: 1280, 
                     height: 720,
-                    facingMode: 'user' // Use Selfie Cam
+                    facingMode: 'user'
                 });
 
-                await camera.start();
+                await cameraObj.start();
                 
                 startScreen.style.opacity = '0';
                 setTimeout(() => startScreen.style.display = 'none', 500);
@@ -357,8 +457,8 @@
 
             } catch (error) {
                 console.error(error);
-                startBtn.innerHTML = "Access Denied";
-                alert("Please check camera permissions in your browser settings.");
+                startBtn.innerHTML = "Error";
+                alert("Camera access required.");
             }
         }
 
